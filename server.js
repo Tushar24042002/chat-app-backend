@@ -49,68 +49,61 @@ app.get('/users', async (req, res) => {
   }
 });
 
-const authenticateWebSocket = async (ws, req) => {
-    const token = req.url.split('?token=')[1];
-    if (!token) {
+wss.on('connection', (ws, req) => {
+    const params = new URLSearchParams(req.url.split('?')[1]);
+    const userId = params.get('token');
+  
+    if (!userId) {
       ws.close();
       return;
     }
   
-    try {
-      const result = await db.query('SELECT id, username FROM users WHERE id = $1', [token]);
-      if (result.rows.length === 0) {
-        ws.close();
-        return;
+    ws.userId = userId;
+  
+    console.log(`User ${userId} connected`);
+  
+    ws.on('message', async (message) => {
+      const messageData = JSON.parse(message);
+      console.log(`Received: ${messageData.content} from ${messageData.sender} to ${messageData.receiver}`);
+  
+      try {
+        const senderResult = await db.query('SELECT id FROM users WHERE username = $1', [messageData.sender]);
+        const senderId = senderResult.rows[0].id;
+        const receiverResult = await db.query('SELECT id FROM users WHERE username = $1', [messageData.receiver]);
+        const receiverId = receiverResult.rows[0].id;
+        const newMessage = await db.query(
+          'INSERT INTO messages (content, sender_id, receiver_id) VALUES ($1, $2, $3) RETURNING *',
+          [messageData.content, senderId, receiverId]
+        );
+  
+        // Send message to the sender
+        ws.send(JSON.stringify({
+          content: newMessage.rows[0].content,
+          sender: messageData.sender,
+          receiver: messageData.receiver,
+          timestamp: newMessage.rows[0].timestamp,
+        }));
+  
+        // Broadcast the message to the intended receiver
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN && client.userId == receiverId) {
+            client.send(JSON.stringify({
+              content: newMessage.rows[0].content,
+              sender: messageData.sender,
+              receiver: messageData.receiver,
+              timestamp: newMessage.rows[0].timestamp,
+            }));
+          }
+        });
+      } catch (err) {
+        console.error(err);
       }
+    });
   
-      ws.userId = result.rows[0].id;
-      ws.username = result.rows[0].username;
-    } catch (err) {
-      console.error(err);
-      ws.close();
-    }
-  };
-  
-  wss.on('connection', (ws, req) => {
-    authenticateWebSocket(ws, req).then(() => {
-      console.log('New client connected');
-  
-      ws.on('message', async (message) => {
-        const messageData = JSON.parse(message);
-        console.log(`Received: ${messageData.content}`);
-  
-        try {
-          const senderId = ws.userId;
-          const receiverResult = await db.query('SELECT id FROM users WHERE username = $1', [messageData.receiver]);
-          const receiverId = receiverResult.rows[0].id;
-          const newMessage = await db.query(
-            'INSERT INTO messages (content, sender_id, receiver_id) VALUES ($1, $2, $3) RETURNING *',
-            [messageData.content, senderId, receiverId]
-          );
-  
-          // Broadcast the message to the intended receiver
-          wss.clients.forEach((client) => {
-            if (client !== ws && client.readyState === WebSocket.OPEN && client.userId === receiverId) {
-              client.send(JSON.stringify({
-                content: newMessage.rows[0].content,
-                sender: ws.username,
-                receiver: messageData.receiver,
-                timestamp: newMessage.rows[0].timestamp,
-              }));
-            }
-          });
-        } catch (err) {
-          console.error(err);
-        }
-      });
-  
-      ws.on('close', () => {
-        console.log('Client disconnected');
-      });
+    ws.on('close', () => {
+      console.log(`User ${userId} disconnected`);
     });
   });
-  
-
 server.listen(8080, () => {
   console.log('Server is listening on port 8080');
 });
