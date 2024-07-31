@@ -5,9 +5,10 @@ const db = require('./db');
 const bcrypt = require('bcrypt');
 const app = express();
 const server = http.createServer(app);
+const cors = require("cors");
 const wss = new WebSocket.Server({ server });
 require('dotenv').config();
-
+app.use(cors());
 app.use(express.json());
 
 app.post('/register', async (req, res) => {
