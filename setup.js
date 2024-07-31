@@ -28,6 +28,11 @@ const createOrAlterTables = async () => {
         receiver_id INTEGER REFERENCES users(id)
       );
     `);
+    await db.query(`
+        ALTER TABLE messages
+        ADD COLUMN  receiver_id INTEGER REFERENCES users(id)
+      `);
+  
 
     console.log('Tables created or altered successfully');
   } catch (err) {
